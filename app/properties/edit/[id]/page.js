@@ -41,6 +41,7 @@ export default function EditPropertyPage() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
+  const [showAllPreviewImages, setShowAllPreviewImages] = useState(false);
   const [userId, setUserId] = useState(null);
 
   const descRef = useRef(null);
@@ -876,13 +877,24 @@ export default function EditPropertyPage() {
                       <p className="text-xs text-neutral-500 mb-2">
                         Images ({imageUploadStatus.images.filter(img => img.status === 'completed').length})
                         {imageUploadStatus.images.filter(img => img.status === 'completed').length > 8 &&
-                          <span className="text-neutral-400"> • Showing first 8</span>
+                          <span className="text-neutral-400">
+                            {showAllPreviewImages ? ' • Showing all' : ' • Showing first 8'}
+                          </span>
                         }
                       </p>
+                      {imageUploadStatus.images.filter(img => img.status === 'completed').length > 8 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAllPreviewImages(prev => !prev)}
+                          className="text-xs font-medium text-[#472F97] hover:text-[#3a2578] mb-3"
+                        >
+                          {showAllPreviewImages ? 'Show first 8' : 'Show all'}
+                        </button>
+                      )}
                       <div className="grid grid-cols-4 gap-3">
                         {imageUploadStatus.images
                           .filter(img => img.status === 'completed')
-                          .slice(0, 8)
+                          .slice(0, showAllPreviewImages ? undefined : 8)
                           .map((img, idx) => (
                             <div key={idx} className="relative group">
                               <img
