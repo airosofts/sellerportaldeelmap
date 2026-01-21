@@ -59,10 +59,13 @@ export default function DashboardLayout({ children }) {
         .from('settings')
         .select('name, logo')
         .eq('user_id', userId)
-        .single()
+        .maybeSingle()
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error fetching hotel settings:', error)
+      if (error) {
+        const hasDetails = typeof error === 'object' && error !== null && Object.keys(error).length > 0
+        if (hasDetails) {
+          console.error('Error fetching hotel settings:', error)
+        }
         return
       }
 

@@ -2,21 +2,60 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 
+const GOOGLE_MAPS_SCRIPT_ID = 'google-maps-places';
+let googleMapsLoaderPromise = null;
+
+const loadGoogleMaps = () => {
+  if (typeof window === 'undefined') return Promise.resolve();
+  if (window.google?.maps?.places) return Promise.resolve();
+
+  if (!googleMapsLoaderPromise) {
+    googleMapsLoaderPromise = new Promise((resolve, reject) => {
+      const existingScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID);
+      if (existingScript) {
+        existingScript.addEventListener('load', () => resolve());
+        existingScript.addEventListener('error', () => reject(new Error('Google Maps failed to load')));
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.id = GOOGLE_MAPS_SCRIPT_ID;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY}&libraries=places`;
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Google Maps failed to load'));
+      document.head.appendChild(script);
+    });
+  }
+
+  return googleMapsLoaderPromise;
+};
+
 export default function GooglePlacesAutocomplete({ onAddressSelect, defaultValue = '' }) {
   const [value, setValue] = useState(defaultValue);
   const autocompleteRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.google) {
-      initializeAutocomplete();
-    } else {
-      // Load Google Places API
-      const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_PLACES_API_KEY}&libraries=places`;
-      script.onload = initializeAutocomplete;
-      document.head.appendChild(script);
-    }
+    setValue(defaultValue);
+  }, [defaultValue]);
+
+  useEffect(() => {
+    let isMounted = true;
+    loadGoogleMaps()
+      .then(() => {
+        if (isMounted) {
+          initializeAutocomplete();
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load Google Places API:', error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const initializeAutocomplete = () => {

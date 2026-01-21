@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useRef, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { Save, Eye, ArrowLeft, Upload, X, AlertCircle } from 'lucide-react';
 import ImageGalleryManager from '@/components/properties/ImageGalleryManager';
@@ -27,9 +27,17 @@ const PROPERTY_TYPES = [
   'Luxury Property'
 ];
 
-export default function NewPropertyPage() {
+const slugToTitle = (slug) => (
+  slug
+    ? slug.replace(/\d+$/, '').replace(/-+$/, '').replace(/-/g, ' ').trim()
+    : ''
+);
+
+export default function EditPropertyPage() {
   const router = useRouter();
+  const { id } = useParams();
   const [saving, setSaving] = useState(false);
+  const [loadingProperty, setLoadingProperty] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
@@ -37,6 +45,8 @@ export default function NewPropertyPage() {
 
   const descRef = useRef(null);
   const repairsRef = useRef(null);
+  const initialTitleRef = useRef('');
+  const existingSlugRef = useRef('');
 
   const [formData, setFormData] = useState({
     status: 'draft',
@@ -63,6 +73,97 @@ export default function NewPropertyPage() {
       setUserId(user.id);
     }
   }, []);
+
+  useEffect(() => {
+    if (userId && id) {
+      fetchProperty();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, id]);
+
+  const fetchProperty = async () => {
+    try {
+      setLoadingProperty(true);
+      setError(null);
+
+      const { data, error: fetchError } = await supabase
+        .from('properties')
+        .select(`
+          *,
+          property_images (
+            id,
+            image_url,
+            image_key,
+            sort_order
+          )
+        `)
+        .eq('id', id)
+        .eq('seller_id', userId)
+        .single();
+
+      if (fetchError || !data) {
+        throw fetchError || new Error('Property not found');
+      }
+
+      const derivedTitle = slugToTitle(data.slug);
+      initialTitleRef.current = derivedTitle;
+      existingSlugRef.current = data.slug || '';
+
+      setFormData({
+        title: derivedTitle,
+        location: data.address || '',
+        price: data.price ?? '',
+        bedrooms: data.bedrooms ?? '',
+        bathrooms: data.bathrooms ?? '',
+        floor_area: data.floor_area ?? '',
+        property_type: data.property_type || 'Hotel',
+        property_status: data.property_status || 'available',
+        status: data.status || 'draft',
+        latitude: data.latitude ?? '',
+        longitude: data.longitude ?? '',
+        county: data.county ?? '',
+        city: data.city ?? '',
+        zipcode: data.zipcode ?? '',
+        state: data.state ?? '',
+        description: data.description || '',
+        repairs: data.repairs || '',
+        seo_title: data.seo_title || '',
+        seo_description: data.seo_description || '',
+        social_title: data.social_title || '',
+        social_description: data.social_description || '',
+        social_image_url: data.social_image_url || ''
+      });
+
+      const sortedImages = (data.property_images || [])
+        .sort((a, b) => a.sort_order - b.sort_order);
+
+      const mappedImages = sortedImages.map((img, index) => ({
+        id: img.id || `existing-${index}`,
+        status: 'completed',
+        imageUrl: img.image_url,
+        imageKey: img.image_key,
+        preview: img.image_url,
+        isFeatured: index === 0
+      }));
+
+      setImageUploadStatus({
+        images: mappedImages,
+        isUploading: false,
+        uploadingCount: 0
+      });
+
+      setInspectionReport({
+        url: data.inspection_report_url || null,
+        key: data.inspection_report_key || null,
+        uploading: false
+      });
+    } catch (err) {
+      console.error('Failed to load property:', err);
+      setError('Failed to load property. Please try again.');
+    } finally {
+      setLoadingProperty(false);
+    }
+  };
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -122,19 +223,26 @@ export default function NewPropertyPage() {
     setError(null);
     setSuccess(null);
 
-    // Generate slug from title
-    const slug = formData.title
+    const trimmedTitle = formData.title.trim();
+    const slugBase = trimmedTitle
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '');
 
+    const shouldUpdateSlug = trimmedTitle &&
+      trimmedTitle.toLowerCase() !== (initialTitleRef.current || '').toLowerCase();
+
+    const slugToSave = shouldUpdateSlug && slugBase
+      ? `${slugBase}-${Date.now()}`
+      : existingSlugRef.current;
+
     // Create save data object matching the actual database schema
     const saveData = {
-      seller_id: userId,
       status: publishStatus,
-      slug: `${slug}-${Date.now()}`, // Make slug unique with timestamp
-      address: formData.location || '', // 'location' in form maps to 'address' in DB
+      slug: slugToSave,
+      address: formData.location || '',
       property_status: formData.property_status || 'available',
+      property_type: formData.property_type || 'Hotel',
       description: formData.description || '',
       repairs: formData.repairs || ''
     };
@@ -151,27 +259,35 @@ export default function NewPropertyPage() {
     if (formData.state) saveData.state = formData.state;
 
     // Add SEO fields (using correct column names from schema)
-    if (formData.meta_title) saveData.seo_title = formData.meta_title;
-    if (formData.meta_description) saveData.seo_description = formData.meta_description;
-    if (formData.social_share_image) saveData.social_image_url = formData.social_share_image;
+    if (formData.seo_title) saveData.seo_title = formData.seo_title;
+    if (formData.seo_description) saveData.seo_description = formData.seo_description;
+    if (formData.social_image_url) saveData.social_image_url = formData.social_image_url;
 
     // Add inspection report if provided
     if (inspectionReport.url) saveData.inspection_report_url = inspectionReport.url;
     if (inspectionReport.key) saveData.inspection_report_key = inspectionReport.key;
 
-    console.log('Saving property with data:', saveData);
-
     try {
-      // Create property
-      const { data, error: saveErr } = await supabase
+      const { data, error: updateError } = await supabase
         .from('properties')
-        .insert([saveData])
+        .update(saveData)
+        .eq('id', id)
+        .eq('seller_id', userId)
         .select()
         .single();
 
-      if (saveErr) throw saveErr;
+      if (updateError) throw updateError;
 
-      // Save images to database
+      // Replace images in database
+      const { error: deleteImagesError } = await supabase
+        .from('property_images')
+        .delete()
+        .eq('property_id', data.id);
+
+      if (deleteImagesError) {
+        console.error('Images delete error:', deleteImagesError);
+      }
+
       if (imageUploadStatus.images.length > 0) {
         const completedImages = imageUploadStatus.images.filter(
           img => img.status === 'completed' && img.imageUrl
@@ -197,17 +313,16 @@ export default function NewPropertyPage() {
 
       setSuccess(
         publishStatus === 'active'
-          ? 'Property published successfully!'
-          : 'Property saved as draft!'
+          ? 'Property updated and published!'
+          : 'Property updated successfully!'
       );
 
       setTimeout(() => {
         router.push('/properties');
       }, 1500);
-
     } catch (err) {
-      console.error('Save failed:', err);
-      setError(err?.message || 'Failed to save property. Please try again.');
+      console.error('Update failed:', err);
+      setError(err?.message || 'Failed to update property. Please try again.');
       setSaving(false);
     }
   };
@@ -237,7 +352,7 @@ export default function NewPropertyPage() {
     try {
       const fileName = `inspection-reports/${userId}/${Date.now()}-${file.name}`;
 
-      const { data, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('sellerpropertyimages')
         .upload(fileName, file, {
           cacheControl: '3600',
@@ -276,6 +391,14 @@ export default function NewPropertyPage() {
     setInspectionReport({ url: null, key: null, uploading: false });
   };
 
+  if (loadingProperty) {
+    return (
+      <div className="min-h-[50vh] flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-2 border-neutral-900 border-t-transparent"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3 md:space-y-4">
       {/* Header */}
@@ -288,8 +411,8 @@ export default function NewPropertyPage() {
             <ArrowLeft size={20} className="text-neutral-600" />
           </button>
           <div>
-            <h1 className="text-lg md:text-xl font-semibold tracking-tight text-neutral-900">Add New Property</h1>
-            <p className="text-xs text-neutral-500 mt-0.5">Create a new wholesale property listing</p>
+            <h1 className="text-lg md:text-xl font-semibold tracking-tight text-neutral-900">Edit Property</h1>
+            <p className="text-xs text-neutral-500 mt-0.5">Update your wholesale property listing</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -788,3 +911,4 @@ export default function NewPropertyPage() {
     </div>
   );
 }
+

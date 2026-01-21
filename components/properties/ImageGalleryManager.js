@@ -5,11 +5,13 @@ import { supabase } from '@/lib/supabase';
 import { Upload, X, Image as ImageIcon, Star, Loader } from 'lucide-react';
 import imageCompression from 'browser-image-compression';
 
+const MAX_CONCURRENT_UPLOADS = 4;
+
 export default function ImageGalleryManager({ images = [], onImagesChange, sellerId }) {
   const [localImages, setLocalImages] = useState(images);
   const [dragActive, setDragActive] = useState(false);
 
-  const isProcessingRef = useRef(false);
+  const inFlightIdsRef = useRef(new Set());
   const imagesRef = useRef(localImages);
 
   useEffect(() => {
@@ -49,29 +51,14 @@ export default function ImageGalleryManager({ images = [], onImagesChange, selle
     };
   }, [localImages, onImagesChange]);
 
-  // Process next image in queue
-  const processNextImage = async () => {
-    if (isProcessingRef.current) {
-      console.log('Already processing, skipping...');
-      return;
-    }
-
-    const currentImages = imagesRef.current;
-    const nextQueued = currentImages.find(img => img.status === 'queued');
-
-    if (!nextQueued) {
-      isProcessingRef.current = false;
-      console.log('No queued images, stopping processor');
-      return;
-    }
-
-    isProcessingRef.current = true;
-    console.log('Processing image:', nextQueued.id);
+  async function startUpload(image) {
+    if (inFlightIdsRef.current.has(image.id)) return;
+    inFlightIdsRef.current.add(image.id);
 
     try {
       // Update status to uploading
       setLocalImages(prev => prev.map(img =>
-        img.id === nextQueued.id ? { ...img, status: 'uploading' } : img
+        img.id === image.id ? { ...img, status: 'uploading' } : img
       ));
 
       // Wait a frame for state to update
@@ -79,11 +66,11 @@ export default function ImageGalleryManager({ images = [], onImagesChange, selle
 
       // Compress image
       console.log('Compressing image...');
-      const compressedFile = await compressImage(nextQueued.file);
+      const compressedFile = await compressImage(image.file);
       console.log('Compression complete');
 
       // Generate unique filename
-      const fileExt = nextQueued.file.name.split('.').pop();
+      const fileExt = image.file.name.split('.').pop();
       const fileName = `${sellerId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
 
       // Upload to Supabase
@@ -105,38 +92,49 @@ export default function ImageGalleryManager({ images = [], onImagesChange, selle
 
       // Update local images with completed status
       setLocalImages(prev => prev.map(img =>
-        img.id === nextQueued.id
+        img.id === image.id
           ? { ...img, status: 'completed', imageUrl: publicUrl, imageKey: fileName, file: null }
           : img
       ));
 
-      console.log('Image processing complete:', nextQueued.id);
+      console.log('Image processing complete:', image.id);
 
     } catch (error) {
       console.error('Upload error:', error);
       setLocalImages(prev => prev.map(img =>
-        img.id === nextQueued.id
+        img.id === image.id
           ? { ...img, status: 'error', error: error.message }
           : img
       ));
     } finally {
-      isProcessingRef.current = false;
-      // Continue processing next image
+      inFlightIdsRef.current.delete(image.id);
+      // Continue processing queued images
       const stillHasQueued = imagesRef.current.some(img => img.status === 'queued');
       if (stillHasQueued) {
-        console.log('More images in queue, continuing...');
-        setTimeout(() => processNextImage(), 100);
-      } else {
-        console.log('All images processed');
+        scheduleUploads();
       }
     }
-  };
+  }
+
+  function scheduleUploads() {
+    const currentImages = imagesRef.current;
+    const availableSlots = MAX_CONCURRENT_UPLOADS - inFlightIdsRef.current.size;
+    if (availableSlots <= 0) return;
+
+    const queuedImages = currentImages.filter(
+      img => img.status === 'queued' && !inFlightIdsRef.current.has(img.id)
+    );
+
+    queuedImages.slice(0, availableSlots).forEach((img) => {
+      startUpload(img);
+    });
+  }
 
   // Auto-process queued images
   useEffect(() => {
     const hasQueued = localImages.some(img => img.status === 'queued');
-    if (hasQueued && !isProcessingRef.current) {
-      const timer = setTimeout(() => processNextImage(), 50);
+    if (hasQueued) {
+      const timer = setTimeout(() => scheduleUploads(), 50);
       return () => clearTimeout(timer);
     }
   }, [localImages]);
@@ -225,12 +223,16 @@ export default function ImageGalleryManager({ images = [], onImagesChange, selle
   };
 
   const handleSetFeatured = (imageId) => {
-    setLocalImages(prev =>
-      prev.map(img => ({
+    setLocalImages(prev => {
+      const isAlreadyFeatured = prev.find(img => img.id === imageId)?.isFeatured;
+      if (isAlreadyFeatured) {
+        return prev.map(img => ({ ...img, isFeatured: false }));
+      }
+      return prev.map(img => ({
         ...img,
         isFeatured: img.id === imageId
-      }))
-    );
+      }));
+    });
   };
 
   const handleRetry = (imageId) => {
@@ -278,7 +280,7 @@ export default function ImageGalleryManager({ images = [], onImagesChange, selle
               : 'Click to select or drag and drop multiple images'}
           </p>
           <p className="text-xs text-neutral-500 mb-4">
-            Images optimized & uploaded one at a time
+            Images optimized & uploaded up to {MAX_CONCURRENT_UPLOADS} at a time
           </p>
           <input
             type="file"
@@ -398,13 +400,13 @@ export default function ImageGalleryManager({ images = [], onImagesChange, selle
                     <button
                       onClick={() => handleSetFeatured(image.id)}
                       className={`p-2 rounded-lg transition-colors ${
-                        image.isFeatured || index === 0
+                        image.isFeatured
                           ? 'bg-yellow-500 text-white'
                           : 'bg-white text-neutral-700 hover:bg-yellow-500 hover:text-white'
                       }`}
                       title="Set as featured"
                     >
-                      <Star size={16} fill={image.isFeatured || index === 0 ? 'currentColor' : 'none'} />
+                      <Star size={16} fill={image.isFeatured ? 'currentColor' : 'none'} />
                     </button>
                     <button
                       onClick={() => handleRemove(image.id, image.imageKey)}
@@ -416,7 +418,7 @@ export default function ImageGalleryManager({ images = [], onImagesChange, selle
                   </div>
 
                   {/* Featured Badge */}
-                  {(image.isFeatured || index === 0) && (
+                  {image.isFeatured && (
                     <div className="absolute top-2 left-2 px-2 py-1 bg-yellow-500 text-white text-xs font-medium rounded-lg flex items-center gap-1">
                       <Star size={12} fill="currentColor" />
                       Featured
@@ -431,3 +433,4 @@ export default function ImageGalleryManager({ images = [], onImagesChange, selle
     </div>
   );
 }
+
