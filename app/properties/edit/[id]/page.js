@@ -643,19 +643,17 @@ export default function EditPropertyPage() {
           )}
 
           {/* Images Tab */}
-          {activeTab === 'images' && (
-            <div>
-              <h3 className="text-lg font-semibold text-neutral-900 mb-2">Property Images</h3>
-              <p className="text-sm text-neutral-600 mb-6">
-                Upload property images. They will be automatically compressed and uploaded immediately. The first image will be set as the featured image.
-              </p>
-              <ImageGalleryManager
-                images={imageUploadStatus.images}
-                onImagesChange={handleImagesChange}
-                sellerId={userId}
-              />
-            </div>
-          )}
+          <div className={activeTab === 'images' ? '' : 'hidden'}>
+            <h3 className="text-lg font-semibold text-neutral-900 mb-2">Property Images</h3>
+            <p className="text-sm text-neutral-600 mb-6">
+              Upload property images. They will be automatically compressed and uploaded immediately. The first image will be set as the featured image.
+            </p>
+            <ImageGalleryManager
+              images={imageUploadStatus.images}
+              onImagesChange={handleImagesChange}
+              sellerId={userId}
+            />
+          </div>
 
           {/* Inspection Report Tab */}
           {activeTab === 'inspection' && (
